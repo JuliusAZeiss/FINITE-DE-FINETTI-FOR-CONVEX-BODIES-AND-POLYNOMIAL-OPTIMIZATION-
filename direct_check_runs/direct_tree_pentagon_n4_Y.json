@@ -1,0 +1,37 @@
+{
+ "Y_file": "direct_tree_pentagon_n4_Y.npy",
+ "Y_sha256": "d3da1e9afefeba5ed27d936998afe122125a618e42285dc94beb965298932a20",
+ "experiment": "pentagon",
+ "n": 4,
+ "method": "tree LP (complete facet family)",
+ "value": 0.8948818927277435,
+ "value_recomputed": 0.8948818927277435,
+ "status": "Optimal",
+ "solver": "ipm",
+ "presolve": "choose",
+ "crossover": "off",
+ "ipm_tol": 1e-10,
+ "box": null,
+ "solve_seconds": 9484.566687583923,
+ "checks": {
+  "min_facet": -4.4773956921846885e-15,
+  "norm_residual": 0.0,
+  "max_FB_all_slots": 0.0,
+  "max_perm_violation": 0.0,
+  "n_perms_checked": 24
+ },
+ "tolerances": {
+  "feasibility": 1e-08,
+  "equality": 1e-08
+ },
+ "facets_pass": true,
+ "equalities_pass": true,
+ "all_checks_pass": true,
+ "environment": {
+  "note": "original run of 2026-08-18 (same container image: Python 3.11.15, numpy 2.4.4, scipy 1.17.1, HiGHS 1.15.1, x86_64 Linux); side-car written 2026-08-19 from the stored array"
+ },
+ "source_sha256": {
+  "direct_hierarchy_tree.py (at run time)": "e6d4e8464802bb611241126ca540cc2f095b56d28ea8318be5ba0d58cc780a3e",
+  "direct_hierarchy.py (at run time)": "04c2da069a7a5364d7e4ffaad0f5e4e6a2558c4c2fe9dd722e9f8ab7e472311d"
+ }
+}
