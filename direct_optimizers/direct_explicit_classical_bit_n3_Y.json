@@ -1,0 +1,48 @@
+{
+ "Y_file": "direct_explicit_classical_bit_n3_Y.npy",
+ "Y_sha256": "3d2f54b8780d594c9d79445328f172dcba96811be5cd944c67434657d32f5b6e",
+ "experiment": "classical bit",
+ "n": 3,
+ "method": "explicit Kronecker LP",
+ "value": 0.75,
+ "status": "Optimal",
+ "solver": "choose",
+ "presolve": "choose",
+ "solver_options": {
+  "solver": "choose",
+  "presolve": "choose",
+  "run_crossover": "on",
+  "time_limit": "inf",
+  "primal_feasibility_tolerance": 1e-07,
+  "dual_feasibility_tolerance": 1e-07,
+  "ipm_optimality_tolerance": 1e-08,
+  "simplex_strategy": 1,
+  "random_seed": 0,
+  "threads": 0
+ },
+ "simplex_iterations": 624,
+ "ipm_iterations": 0,
+ "checks": {
+  "min_facet": -3.3306690738754696e-16,
+  "norm_residual": 0.0,
+  "max_FB_all_slots": 0.0,
+  "max_perm_violation": 0.0,
+  "n_perms_checked": 6
+ },
+ "tolerances": {
+  "feasibility": 1e-08,
+  "equality": 1e-08
+ },
+ "facets_pass": true,
+ "equalities_pass": true,
+ "all_checks_pass": true,
+ "environment": {
+  "python": "3.11.15",
+  "numpy": "2.4.4",
+  "scipy": "1.17.1",
+  "highspy": "1.15.1",
+  "platform": "Linux-6.18.5-fc-v20-x86_64-with-glibc2.39",
+  "machine": "x86_64"
+ },
+ "source_sha256": "b381e9dbfc2b0077c981ae87d3dc7323403a39aee60ba1f566706233dd832039"
+}

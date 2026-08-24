@@ -1,0 +1,49 @@
+{
+ "Y_file": "sensitivity_square_gbit_n2_tree-ipm_Y.npy",
+ "Y_sha256": "86e6bb384445a89231434f32563a8b8c65c9e8231c60de83e3291d3d9b3d5aaa",
+ "experiment": "square gbit",
+ "n": 2,
+ "route": "tree-ipm",
+ "value": 0.9999999999999996,
+ "status": "Optimal",
+ "solver_options": {
+  "solver": "ipm",
+  "presolve": "choose",
+  "run_crossover": "off",
+  "time_limit": "inf",
+  "primal_feasibility_tolerance": 1e-07,
+  "dual_feasibility_tolerance": 1e-07,
+  "ipm_optimality_tolerance": 1e-10,
+  "simplex_strategy": 1,
+  "random_seed": 0,
+  "threads": 0
+ },
+ "checks": {
+  "min_facet": -1.0130237803931364e-16,
+  "norm_residual": 0.0,
+  "max_FB_all_slots": 0.0,
+  "max_perm_violation": 0.0,
+  "n_perms_checked": 2
+ },
+ "tolerances": {
+  "feasibility": 1e-08,
+  "equality": 1e-08
+ },
+ "facets_pass": true,
+ "equalities_pass": true,
+ "all_checks_pass": true,
+ "environment": {
+  "python": "3.11.15",
+  "numpy": "2.4.4",
+  "scipy": "1.17.1",
+  "highspy": "1.15.1",
+  "platform": "Linux-6.18.5-fc-v20-x86_64-with-glibc2.39",
+  "machine": "x86_64"
+ },
+ "source_sha256": {
+  "direct_inner_sensitivity.py": "322e9d79abf5222e8526801939b512d1f3de4fc1ac1f3ef83e3d5cbd8ab0d8ea",
+  "direct_inner_rounding.py": "0df9c2b469fc12683b7680967dc387f49f3a73eb1dec4f56b20c5bb5aff07c0d",
+  "direct_hierarchy.py": "b381e9dbfc2b0077c981ae87d3dc7323403a39aee60ba1f566706233dd832039",
+  "direct_hierarchy_tree.py": "7f2caec06692357e6264e2a734c38cae70bdfe23965bc8d369f1844dd569b0a0"
+ }
+}
