@@ -1,0 +1,843 @@
+% !TEX program = pdflatex
+% ---------------------------------------------------------------------------
+% Implementation notes for the numerics of
+%   "Finite de Finetti for convex bodies and polynomial optimization"
+% Standalone companion document for the GitHub repository.
+% Compile with:  pdflatex implementation_notes.tex  (twice)
+% ---------------------------------------------------------------------------
+\documentclass[11pt,a4paper]{article}
+
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{geometry}
+\geometry{a4paper, total={150mm,225mm}}
+\usepackage{amsmath,amssymb,amsthm,mathtools}
+\usepackage{array}
+\usepackage{booktabs}
+\usepackage{enumitem}
+\usepackage[dvipsnames]{xcolor}
+\usepackage[colorlinks, citecolor=PineGreen, linkcolor=MidnightBlue, urlcolor=PineGreen]{hyperref}
+\usepackage{xurl}
+
+% ------------------------------------------------------------- paper macros
+\newcommand*{\tmin}{\dot{\otimes}}
+\newcommand*{\tmax}{\hat{\otimes}}
+\newcommand*{\lrbracket}[1]{\left(#1\right)}
+\newcommand*{\lrvert}[1]{\left\lvert #1 \right\rvert}
+\newcommand*{\Acal}{\mathcal{A}}
+\newcommand*{\Bcal}{\mathcal{B}}
+\newcommand*{\Xcal}{\mathcal{X}}
+\newcommand*{\Ycal}{\mathcal{Y}}
+\DeclareMathOperator{\ext}{ext}
+\DeclareMathOperator{\Val}{Val}
+\DeclareMathOperator{\conv}{conv}
+\newcommand*{\Kasm}{K_{\mathrm{asm}}}
+\newcommand*{\Kmm}{K_{\mathrm{mm}}}
+\newcommand*{\Casm}{C_{\mathrm{asm}}}
+\newcommand*{\Cmm}{C_{\mathrm{mm}}}
+% one place to fill in the final repository location:
+\newcommand*{\repourl}{\url{https://github.com/JuliusAZeiss/Finite-de-Finetti-for-convex-bodies-and-Polynomial-Optimization}}
+\newcommand*{\code}[1]{\texttt{#1}}
+% allow a little slack around long typewriter file names
+\emergencystretch=2em
+
+\theoremstyle{remark}
+\newtheorem*{note}{Note}
+
+\title{Implementation notes and reproduction guide\\[2mm]
+{\large Numerics companion to
+``Finite de Finetti for convex bodies and polynomial optimization''~\cite{paper}}}
+\author{Julius A. Zeiss \and Gereon Kossmann \and Ren\'e Schwonnek \and Martin Pl\'avala}
+\date{August 2026}
+
+\begin{document}
+\maketitle
+
+\noindent
+This document collects the implementation details behind the section
+\emph{Numerical illustration: non-local games over polygon theories} of the
+paper~\cite{paper}, which the paper itself states only in compressed form.
+It is meant to be read alongside the code in the
+repository\footnote{\repourl\\ File names in typewriter font refer to
+files in the repository; \code{unreduced\_checks/} is its only subfolder.}
+and should let a reader check, modify and re-run every reported number
+without reverse-engineering the source. No result stated here is new;
+everything expands on the numerics section of the paper, in particular on
+its Table~1, its Figure~1 and its observations (a)--(f).
+
+\tableofcontents
+
+% ===========================================================================
+\section{What is computed}\label{sec:overview}
+
+For four polytopic experiments --- the classical bit, the square gbit, the
+strongly self-dual regular pentagon, and the pentagon with an additional
+local inequality constraint --- the code computes three things for the
+assemblage value $\gamma^*(G)$ of the CHSH game:
+\begin{enumerate}[leftmargin=2em]
+\item the outer levels $p^{(n)}$, $n=1,\ldots,5$, of the convergent
+hierarchy of the paper (theorem \emph{Convergence of the hierarchy}; label
+\code{thm:convergence\_hierarchy} in the source), each solved as an
+\emph{exact} linear program (Sections~\ref{sec:lp}--\ref{sec:reductions});
+\item at every level a feasible product strategy with value $L^{(n)}$,
+obtained by the rounding scheme of the theorem \emph{Convergent inner
+sequence} (label \code{thm:inner\_bounds}) from the optimizer returned by
+the LP solver (Section~\ref{sec:rounding});
+\item the exact optimum $\gamma^*(G)$ itself, computed directly --- bypassing
+hierarchy and rounding --- and certified in exact arithmetic
+(Section~\ref{sec:exact}), as the reference value of the table.
+\end{enumerate}
+Together these sandwich the optimum, $L^{(n)}\leq\gamma^*(G)\leq p^{(n)}$,
+with explicit certificates on both sides at every level. The remaining
+sections document the problem sizes and runtimes (Section~\ref{sec:sizes}),
+an independent re-computation of all outer levels \emph{without} any of the
+reductions of Section~\ref{sec:reductions} (Section~\ref{sec:unreduced}),
+the study behind observation (e) of the paper --- the dependence of the
+rounded values on the chosen optimizer (Section~\ref{sec:sensitivity}) ---,
+the level-1 diagnostics behind observation (a) (Section~\ref{sec:level1}),
+and finally how to reproduce everything and what each file contains
+(Sections~\ref{sec:repro}--\ref{sec:files}).
+
+Table~\ref{tab:map} maps the claims of the paper's numerics section to the
+files that produce them.
+
+\begin{table}[ht]\centering\small
+\begin{tabular}{>{\raggedright\arraybackslash}p{56mm}>{\raggedright\arraybackslash}p{84mm}}
+\toprule
+claim in the paper & produced / checked by\\
+\midrule
+Table 1, rows $p^{(n)}$ and $L^{(n)}$; Figure 1 & \code{reproduce.py} $\to$ \code{results.json}; \code{make\_figure.py}\\
+Table 1, column $\gamma^*$ (exact) & \code{exact\_game\_value.py} $\to$ \code{exact\_game\_values.json}\\
+(a) level 1 is the maximal tensor product & \code{level1\_pseudocorrelations.py}\\
+(b) zero-gap certificates (bit $n=2$, gbit $n=4$) & \code{results.json}\\
+(c) strict convergence, $\approx 0.1/n$ & \code{results.json}, \code{make\_figure.py}\\
+(d) certified inner strategies, bracket at $n=5$, $m^*=n-1$ & \code{results.json} (field \code{min\_slack}, \code{per\_m\_best})\\
+(e) optimizer dependence of $L^{(n)}$, quoted ranges & \code{unreduced\_checks/direct\_inner\_sensitivity.py}\\
+(f) the inequality constraint binds & \code{exact\_game\_values.json}, \code{results.json}\\
+``every level is an exact LP'' (the reductions are exact) & \code{unreduced\_checks/direct\_hierarchy.py}, \code{unreduced\_checks/direct\_hierarchy\_tree.py}\\
+all of the above in one executable document & \code{reproduce\_results.ipynb}\\
+\bottomrule
+\end{tabular}
+\caption{Where each claim of the numerics section is produced.}\label{tab:map}
+\end{table}
+
+% ===========================================================================
+\section{The optimization problem}\label{sec:problem}
+
+Throughout, $G$ is the CHSH game:
+$\Acal=\Bcal=\Xcal=\Ycal=\lbrace 0,1\rbrace$, uniform question
+distribution $\pi$, and predicate $V(a,b,x,y)=1$ iff $a\oplus b=x\wedge y$;
+the game coefficients are $g_{abxy}=\pi(x,y)V(a,b,x,y)$ and all values are
+reported in the winning-probability convention. The assemblage value of the
+game is the bilinear problem
+\begin{align}\label{eq:gamma}
+\begin{split}
+    \gamma^*(G) \;=\; \sup_{\xi_B,\, N_B}\quad
+    & G_{\Acal\Bcal\Xcal\Ycal}\!\left[\lrbracket{N_B\otimes \xi_B}\lrbracket{\chi_{A(K_B)^{\star}}}\right]\\
+    \text{s.t.}\quad
+    & \xi_B \in \Kasm \coloneqq CS^1_{2,2}\tmax K_B,\\
+    & N_B \in \Kmm \coloneqq \left\lbrace N\in A(K_B)^+\tmax CS^+_{2,2} \,:\,
+      \lrbracket{\operatorname{id}\otimes 1_{CS^1_{2,2}}}\lrbracket{N}=1_{K_B}\right\rbrace,
+\end{split}
+\end{align}
+i.e.\ exactly the game formulation of the paper: $\xi_B$ is Alice's
+assemblage, $N_B$ is Bob's complete multimeter, and the multimeter
+normalization is the local equality constraint $F_B$ of the hierarchy. Four
+experiments are run, distinguished by the local state space $K_B$ and one
+optional constraint:
+
+\begin{center}
+\begin{tabular}{lll}
+\toprule
+experiment & $K_B$ & extra constraint\\
+\midrule
+classical bit & simplex $\Delta_2$ & --\\
+square gbit (``boxworld'') & square, vertices $(1,\pm1,\pm1)$ & --\\
+pentagon & regular pentagon, $r_5=\sqrt{\sec(\pi/5)}$ & --\\
+pentagon + inequality & same & $q_{1\vert 0}\geq 0.7$, Eq.~\eqref{eq:GA}\\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\noindent
+Here $r_5$ denotes the pentagon's circumradius. With this value the
+pentagon is \emph{strongly} self-dual: the extreme rays of the dual cone,
+normalized by their first coordinate, coincide with the vertices of the
+pentagon itself (odd polygons are strongly self-dual, even ones only weakly
+so, the dual of the square being the square rotated by $\pi/4$ and
+rescaled)~\cite{Janotta2011}; the notebook verifies both statements
+numerically. The inequality experiment imposes the local constraint
+\begin{align}\label{eq:GA}
+    G_A(\xi_B)\;=\; q_{1\vert 0}(\xi_B) - 0.7\cdot 1_{\Kasm}(\xi_B)\;\geq\; 0,
+\end{align}
+forcing Alice to answer $a=1$ on question $x=0$ with probability
+at least $0.7$; on the extension it is imposed in the conic sense
+(item (2c) in the paper's definition of the hierarchy $\Sigma^n(A:B)$;
+labels (2b)/(2c) below always refer to those constraint items, not to
+equation numbers of this document), which is precisely the feature that
+distinguishes the hierarchy of~\cite{paper} from the polarization
+hierarchy.
+
+{\sloppy
+In the code, a state space is a \code{Cone} object (vertices \code{gens},
+dual rays \code{dual}, order unit \code{u}, interior point \code{tau});
+the derived game data live in a \code{GameProblem}
+(objective matrix \code{W}, normalization \code{uA}, unit \code{t},
+equality rows \code{F\_rows}, optional inequality rows \code{GA\_rows},
+and the dual rays \code{DR\_A} and \code{DR\_B} of the two bodies). All
+experiments are assembled in \code{make\_experiments()} of
+\code{reproduce.py}.\par}
+
+% ===========================================================================
+\section{Every level is an exact linear program}\label{sec:lp}
+
+For polytopic state spaces both bodies in~\eqref{eq:gamma} are polytopes.
+Membership in the maximal tensor product of the corresponding cones admits
+an exact finite facet description, because the dual of the maximal tensor
+product is the minimal tensor product of the duals, whose extreme rays are
+the products of the factors' extreme rays. Level $n$ of the hierarchy
+relaxes the product $\xi_B\otimes N_B$ to a permutation-invariant,
+normalized extension
+\begin{align}\label{eq:leveln}
+\begin{split}
+    p^{(n)} = \max\quad & \big\langle W\otimes t^{\otimes(n-1)},\, Y\big\rangle\\
+    \text{s.t.}\quad
+    & Y \in \Casm\tmax \Cmm^{\tmax n}
+      \qquad\qquad\qquad\quad\ \text{(facet inequalities, see below)}\\
+    & \lrbracket{u_A\otimes t^{\otimes n}}(Y)=1
+      \qquad\qquad\qquad\ \, \text{(normalization)}\\
+    & \lrbracket{\operatorname{id}\otimes F_B\otimes \operatorname{id}^{\otimes(n-1)}}(Y)=0
+      \qquad\ \text{(local equalities, (2b))}\\
+    & \lrbracket{G_A\otimes \operatorname{id}^{\otimes n}}(Y)\geq 0
+      \qquad\qquad\quad\ \, \text{(local inequalities, (2c))}
+\end{split}
+\end{align}
+with the membership constraint written out as
+\begin{align}\label{eq:facets}
+    \lrbracket{\varphi\otimes\psi_{k_1}\otimes\cdots\otimes\psi_{k_n}}(Y)\;\geq\;0
+    \qquad \text{for all }\varphi\in\ext \Casm^{\,*},\
+    \psi_{k_i}\in\ext \Cmm^{\,*}.
+\end{align}
+Hence every level is a linear program (LP), and the LP optimum equals
+$p^{(n)}$ exactly up to solver tolerances of order $10^{-8}$
+(HiGHS~\cite{HiGHS}, dual simplex for the small levels, interior point with
+crossover for the largest reduced LPs).
+
+For the pentagon,
+$\lrvert{\ext \Casm^{\,*}}=\lrvert{\ext \Cmm^{\,*}}=20$, so after the
+multiset reduction of Section~\ref{sec:reductions} the family~\eqref{eq:facets}
+contains $20\binom{19+n}{n}$ rows: $4\,200$ at $n=2$, about
+$1.77\times 10^5$ at $n=4$, $8.5\times 10^5$ at $n=5$ and $3.5\times 10^6$
+at $n=6$ (plus $\binom{19+n}{n}$ conic rows of $G_A$ in the constrained
+experiment). The further reductions below compress these to LPs with a few
+hundred variables that solve within seconds to minutes on one CPU core
+(Section~\ref{sec:sizes}).
+
+% ===========================================================================
+\section{Three exact reductions}\label{sec:reductions}
+
+All three reductions are \emph{exact}: they change neither the feasible
+value set nor the optimum, only the parametrization. The paper does not
+discuss them; Section~\ref{sec:unreduced} verifies numerically that the
+levels solved with none of them give the same values.
+
+\subsection{Permutation symmetry: the multiset basis}
+
+By permutation invariance the extension $Y_{AB^n}$ is stored in the
+symmetric (multiset) basis over the $n$ copies of $B$: one coordinate per
+pair $(\alpha, M)$ of an $A$-index $\alpha$ and a multiset $M$ of size $n$
+of $B$-indices, holding the common value of $Y_{\alpha, i_1\ldots i_n}$
+for any ordering $(i_1,\ldots,i_n)$ of $M$ (``value form''). A symmetric
+slot then has dimension $\binom{d_B+n-1}{n}$ instead of $d_B^{\,n}$, and a
+one-slot contraction with a covector $f$ is the sparse update
+\begin{align*}
+    (f\mathbin{._1}Y)[\alpha, M'] \;=\; \sum_i f_i\, Y[\alpha, M'+\lbrace i\rbrace],
+\end{align*}
+implemented with a precomputed multiset-successor table (class
+\code{SymSpace} of the library). The facet list~\eqref{eq:facets}
+likewise reduces to ray \emph{multisets} $k_1\leq\cdots\leq k_n$.
+
+\subsection{Local equalities as a subspace}
+
+By permutation invariance, the equality constraint (2b) forces every
+$B$-slot of $Y$ into $\ker F_B$, a subspace of dimension $1+2\dim K_B$.
+Parametrizing all slots inside $\ker F_B$ from the start realizes
+\emph{all} equality constraints exactly and removes them from the LP; the
+single remaining equality row is the normalization. This also matters for
+the rounding of Section~\ref{sec:rounding}: any point assembled from such
+slots satisfies the multimeter normalization automatically.
+
+\subsection{Dihedral symmetry: orbit averaging}\label{sec:orbit}
+
+The full problem data of~\eqref{eq:leveln} --- objective, normalization,
+both cones, $F_B$ and $G_A$ --- are invariant under the dihedral symmetry
+group of the polygon $K_B$, acting simultaneously on all tensor factors.
+Group elements permute the facets~\eqref{eq:facets} by relabelling
+(a permutation of the dual rays inside $\varphi$ and of the vertex labels
+inside the $\psi_{k}$; \code{dihedral\_actions()} constructs both
+permutation actions). Replacing each facet by its orbit average therefore
+yields an LP with the same optimum:
+\begin{itemize}[leftmargin=1.5em]
+\item averaged rows are convex combinations of valid rows, so the
+averaged LP is a relaxation ($p^{(n)}_{\mathrm{avg}}\geq p^{(n)}$);
+\item conversely, the group average of any feasible point of the averaged
+LP is feasible for the original LP with the same objective value, since
+objective and constraints are invariant ($p^{(n)}_{\mathrm{avg}}\leq p^{(n)}$).
+\end{itemize}
+The averaged rows span an invariant subspace of dimension
+$45, 111, 246, 504$ for $n=2,\ldots,5$ (pentagon), and the LP is solved in
+these coordinates. In symmetric coordinates rescaled by the square root of
+the orbit multiplicity the group action is orthogonal, so the optimizer
+reconstructed from the reduced solution is \emph{exactly} group-invariant
+and hence satisfies every individual facet, which is what the rounding
+step needs. Invariance does not mean uniqueness: the invariant optimal face
+is itself degenerate in general, and the reconstructed optimizer is the one
+the solver happens to return (Section~\ref{sec:sensitivity}).
+
+\begin{note}\sloppy
+The library contains two level solvers with the complete facet list:
+\code{hierarchy\_level\_full} (multiset basis and $\ker F_B$ only, used
+for the classical bit) and \code{hierarchy\_level\_symfull} (in addition
+orbit-averaged; used for the square gbit and both pentagon experiments).
+The \code{certified\_by} field in \code{results.json} records which one
+produced each number. Both are complete-list LPs --- there is no
+cutting-plane truncation anywhere in the reported numbers.
+\end{note}
+
+% ===========================================================================
+\section{Feasible inner points: the rounding pipeline}\label{sec:rounding}
+
+The inner sequence follows the constructive proof of the paper's
+convergence theorem, applied to the optimizer $y^{(n)}$ of each level as
+returned by the LP solver.
+
+\begin{enumerate}[leftmargin=2em]
+\item \textbf{Measurement.} The extreme rays $\psi_k$ of $\Cmm^{\,*}$
+satisfy $\sum_k \psi_k = s\cdot 1_{\Kmm}$ for a scalar $s$ ($s=4, 8, 10$
+for bit, square, pentagon), so $\lbrace \psi_k/s\rbrace_k$ is a symmetric
+informationally complete measurement on $\Kmm$ (the code asserts this
+property at runtime). For each $m\in\lbrace 0,\ldots,n-1\rbrace$, $m$ of the
+$n$ multimeter copies of $y^{(n)}$ are measured with it.
+\item \textbf{Conditioning.} For each outcome multiset $z^m$ (orderings
+are equivalent by permutation invariance; the multinomial weight is
+accounted for), the remaining $n-1-m$ copies are marginalized with the
+unit $t$, leaving a conditional pair on $A\times B$.
+\item \textbf{Productization.} The conditional pair is split into its
+marginals $\lrbracket{x_{A\vert z^m}, x_{B\vert z^m}}$, i.e.\ a bona fide
+product strategy (an assemblage and a multimeter).
+\item \textbf{Report.} Iterating over all $m$ and all outcomes,
+\begin{align}\label{eq:inner}
+    L^{(n)}\;\coloneqq\;\max_{m}\ \max_{z^m}\
+    \Val\lrbracket{x_{A\vert z^m}, x_{B\vert z^m}}\;\leq\;\gamma^*(G),
+\end{align}
+the maximization (sign-flipped) version of the theorem's construction,
+appropriate for the game problems, which maximize a winning probability;
+since each conditional product is feasible, the best of them is at least
+as good as their mixture, the de Finetti inner point of the theorem (whose
+value is recorded as well, field \code{avg\_at\_best\_m}).
+\end{enumerate}
+
+\noindent
+\textbf{Why every candidate is feasible.} Cone membership survives
+contraction with positive functionals (the $\psi_k$ and $t$ are positive);
+the multimeter normalization $F_B$ holds because every slot is
+parametrized inside $\ker F_B$ (Section~\ref{sec:reductions}); and the
+local inequality $G_A$ survives conditioning because it is imposed on the
+extension in the conic sense of constraint (2c). Hence each
+$\lrbracket{x_{A\vert z^m}, x_{B\vert z^m}}$ is feasible for the
+\emph{original, constrained} problem and $L^{(n)}$ is a lower bound
+attained by an explicit strategy --- this is the feasibility mechanism of
+the paper's proof, verified numerically: over all experiments and levels,
+the worst feasibility slack of a rounded candidate in the shipped run is
+$-8.4\times 10^{-11}$, i.e.\ all candidates are feasible to within
+$10^{-10}$ (field \code{min\_slack} in \code{results.json}; the library
+raises an error below $10^{-6}$). For the optimizers of the unreduced LPs
+the same candidates are additionally certified \emph{rigorously}, in
+interval arithmetic (Section~\ref{sec:sensitivity}).
+
+Two practical remarks. First, the maximization over $m$
+in~\eqref{eq:inner} matters: for every entry of Table~1 the best value is
+attained at $m=n-1$ (for the classical bit among ties), and both the per-$m$
+best and the per-$m$ mixture value are recorded. Second --- observation (e)
+of the paper --- the optimal face of each level LP is typically degenerate,
+the rounding map is nonlinear (conditioning divides by the outcome
+probability, then productizes, then maximizes), and so the rounded value is
+a property of the \emph{particular} optimizer that is rounded, not of the
+level alone. Table~1 reports the values obtained from the optimizer
+returned by our implementation in the run shipped as \code{results.json};
+Section~\ref{sec:sensitivity} quantifies the spread.
+
+% ===========================================================================
+\section{Exact reference values}\label{sec:exact}
+
+The optimal values themselves are computed directly in
+\code{exact\_game\_value.py}, bypassing hierarchy and rounding. Both bodies
+in~\eqref{eq:gamma} are polytopes and the objective is bilinear, so the
+optimum is attained at a pair of vertices, and $\Kmm$ is affinely
+isomorphic to $E(K_B)\times E(K_B)$, so its vertices are the pairs of
+extreme effects.
+
+\begin{enumerate}[leftmargin=2em]
+\item \textbf{Extreme multimeters.} The vertices of the effect body
+$E(K_B)=\lbrace e : 0\leq e(g_j)\leq 1\rbrace$ are enumerated exactly as
+intersections of $d$ of the $2m$ planes $e(g_j)\in\lbrace 0,1\rbrace$: $4$
+for the bit, $6$ for the square gbit, $12$ for the pentagon ($0$, $1_{K_B}$,
+the five sharp effects $e_j$ with $e_j(g_j)=1$ and $e_j=0$ on the opposite
+edge, and their complements $1_{K_B}-e_j$). Hence $16$, $36$ and $144$
+multimeter pairs.
+\item \textbf{One LP per multimeter pair.} For a fixed extreme multimeter
+$N_B$ the remaining problem is the LP $\max\lbrace\langle W N_B,\xi\rangle :
+\xi\in\Kasm\rbrace$ over the assemblage polytope ($3d$ variables,
+$4m$ product facets, plus $G_A$ in the constrained experiment). The affine
+symmetry group of $K_B$ (of order $2$, $8$, $10$) acts on the multimeter
+pairs and leaves the LP value invariant, so only orbit representatives are
+solved: $10$, $11$, $24$ of the $16$, $36$, $144$ pairs (\code{--full}
+solves every pair and reproduces the same values).
+\item \textbf{Exact certificates.} Each LP is solved in floating point
+(HiGHS dual simplex without presolve, which returns a basic solution) and
+then certified in exact arithmetic over $\mathbb{Q}(\sqrt5)$ ($\mathbb{Q}$
+for bit and gbit): the optimal vertex is recomputed from its active facets
+and verified feasible, and exact Farkas multipliers $y\geq 0$ with
+$\mu\, u_A - \sum_j y_j\varphi_j = W N_B$ are recomputed from the LP basis,
+so that $\mu=\langle W N_B,\xi^\star\rangle$ is the exact LP value. The
+maximum over the certified values is the exact game value. The pentagon is
+realized over $\mathbb{Q}(\sqrt5)$ as the affine image of the regular
+pentagon under $\operatorname{diag}(1, 1/\sin 72^\circ)$ (game values are
+affine invariants of $K_B$; the affine equivalence to the library's
+pentagon is verified numerically to $10^{-15}$), and the float pipeline is
+additionally re-run in the library's own coordinates
+(\code{GameProblem.W}, facet lists), agreeing to $10^{-15}$.
+\item \textbf{Vertex-enumeration cross-check.} Independently, all vertices
+of $\Kasm$ ($8$, $24$, $60$, and $220$ with the constraint) are enumerated
+by the double description method (\code{pycddlib}~\cite{cddlib}; exact GMP
+arithmetic for the rational state spaces, floating point followed by exact
+re-derivation of every vertex for the pentagon), and the maximum over
+vertex pairs is recomputed exactly; it agrees with the LP value in every
+case. (For the square gbit $\Kasm=CS^1_{2,2}\tmax K_B$ is an affine copy of
+the $2$-$2$-$2$ no-signaling polytope, whence the $24$ vertices.)
+\end{enumerate}
+
+\noindent The results (CHSH, winning probability) are
+\begin{align*}
+ \gamma^*(\mathrm{CHSH}) &= \tfrac34,\qquad 1,\qquad \tfrac{2\sqrt5-1}{4}\approx 0.86803,\qquad
+ \tfrac{3(9+\sqrt5)}{40}\approx 0.84271
+\end{align*}
+for the bit, the square gbit, the pentagon and the pentagon with the
+constraint~\eqref{eq:GA}: the classical CHSH bound, the algebraic maximum
+(PR-box value), and two closed forms in $\sqrt5$. The constraint binds
+(observation (f)). For the pentagon the optimum is attained by $40$ of the
+$144$ multimeter pairs; one optimal strategy in closed form is: Bob measures
+the sharp effects $n_{1\vert 0}=e_3$, $n_{1\vert 1}=e_2$ (adjacent
+vertices), and Alice's assemblage steers along the two diagonals through
+their common crossing point, $\tilde\rho_{0\vert 0}=\varphi^{-1}g_0$,
+$\tilde\rho_{1\vert 0}=\varphi^{-2}g_2$, $\tilde\rho_{0\vert 1}=\varphi^{-1}g_1$,
+$\tilde\rho_{1\vert 1}=\varphi^{-2}g_4$ with $\varphi=(1+\sqrt5)/2$, so that
+$\Bar\rho$ is the intersection of the diagonals $g_0g_2$ and $g_1g_4$ (which
+it divides in the golden ratio) --- not the maximally mixed state. In the
+constrained experiment the constraint is active, $q_{1\vert 0}=7/10$, and
+$30$ pairs are optimal. The script runs in a few seconds and writes
+\code{exact\_game\_values.json} (values, closed forms, maximizing
+multimeters, exact dual certificates, vertex counts, comparison with
+\code{results.json}) and \code{exact\_game\_values.md}.
+
+% ===========================================================================
+\section{Problem sizes and runtimes}\label{sec:sizes}
+
+Table~\ref{tab:sizes} lists, for every experiment and level, the number of
+LP variables (invariant coordinates after all reductions of
+Section~\ref{sec:reductions}), the number of inequality rows of the
+reduced LP, the wall-clock time of the outer solve, and the inner value
+with its optimal $m$, all as recorded in the shipped \code{results.json}.
+All computations ran on a single CPU core; total time for
+\code{reproduce.py} is about $15$--$40$ minutes depending on the machine.
+
+\begin{table}[ht]\centering\small
+\begin{tabular}{llrrrrr}
+\toprule
+experiment & & $n=1$ & $n=2$ & $n=3$ & $n=4$ & $n=5$\\
+\midrule
+classical bit
+ & variables            & 30 & 90 & 210 & 420 & 756\\
+ & rows                 & 64 & 288 & 960 & 2640 & 6336\\
+ & outer solve [s]      & 0.04 & 0.03 & 0.08 & 0.3 & 7.3\\
+ & $L^{(n)}$ ($m^*$)    & 0.500 (0) & 0.750 (0) & 0.750 (2) & 0.750 (3) & 0.750 (2)\\
+\midrule
+square gbit
+ & variables            & 15 & 45 & 123 & 282 & 606\\
+ & rows                 & 32 & 288 & 1632 & 7824 & 31008\\
+ & outer solve [s]      & 0.01 & 0.06 & 0.5 & 5.2 & 106\\
+ & $L^{(n)}$ ($m^*$)    & 0.500 (0) & 0.563 (1) & 0.625 (2) & 1.000 (3) & 1.000 (4)\\
+\midrule
+pentagon
+ & variables            & 15 & 45 & 111 & 246 & 504\\
+ & rows                 & 48 & 456 & 3184 & 18012 & 85728\\
+ & outer solve [s]      & 0.06 & 0.2 & 1.4 & 52 & 245\\
+ & $L^{(n)}$ ($m^*$)    & 0.500 (0) & 0.546 (1) & 0.604 (2) & 0.707 (3) & 0.755 (4)\\
+\midrule
+pentagon + ineq.
+ & variables            & 15 & 45 & 111 & 246 & 504\\
+ & rows                 & 52 & 486 & 3364 & 18973 & 90160\\
+ & outer solve [s]      & 0.01 & 0.1 & 1.3 & 20 & 293\\
+ & $L^{(n)}$ ($m^*$)    & 0.511 (0) & 0.610 (1) & 0.612 (2) & 0.666 (3) & 0.740 (4)\\
+\bottomrule
+\end{tabular}
+\caption{Reduced LP sizes, outer solve times and inner values,
+as recorded in \code{results.json} (fields \code{n\_vars}, \code{n\_cuts},
+\code{seconds}, \code{inner}). The classical bit is solved with the plain
+full facet list (no orbit averaging); the other three experiments use the
+dihedral orbit-averaged LP. For the pentagon the row counts realize the
+$20\binom{19+n}{n}$ facets of Section~\ref{sec:lp} after multiset
+reduction and orbit averaging. For the classical bit the $m^*$ in
+parentheses is the first $m$ attaining the maximum; all $m$ tie from $n=2$
+on. Times are from one run on a single core and vary between machines.}
+\label{tab:sizes}
+\end{table}
+
+The symmetry reduction is generic for polygon models and keeps level
+$n=6$ ($3.5\times 10^6$ facets before averaging) within reach of a laptop
+(not benchmarked). For state spaces admitting conic lifts the same pipeline
+transports to the lifting cones, with LPs replaced by the corresponding
+conic programs.
+
+% ===========================================================================
+\section{Cross-check without any reduction}\label{sec:unreduced}
+
+The paper states that every level is an exact LP and reports the values
+without discussing the reductions of Section~\ref{sec:reductions}. To make
+sure that the reductions are indeed exact in the implementation, the folder
+\code{unreduced\_checks/} solves the \emph{same} level-$n$ programs with
+none of them, exactly as written in the definition of $\Sigma^n(A:B)$:
+\begin{itemize}[leftmargin=1.5em]
+\item \textbf{Variables.} The full extension $Y\in\mathbb{R}^{d_A}\otimes
+(\mathbb{R}^{d_B})^{\otimes n}$, one free real per tensor entry
+($d_A=d_B=9$ for the polygon theories, $6$ for the classical bit); no
+symmetric coordinates, no subspace.
+\item \textbf{Constraints.} All product facets~\eqref{eq:facets} over
+\emph{ordered} tuples ($20\cdot 20^n$ rows for the pentagon), permutation
+invariance as explicit equality rows for the adjacent transpositions
+(which generate $S_n$; invariance under all $n!$ permutations is checked a
+posteriori), the normalization, the local equality (2b) on the first copy
+(checked a posteriori on every copy), and in the fourth experiment the
+conic rows (2c) over all ordered tuples.
+\end{itemize}
+The problem data ($W$, $u_A$, $t$, $F_B$, $G_A$, both extreme-ray
+families) are rebuilt from the definitions in
+\code{direct\_hierarchy.py} and checked to coincide with the library's
+data, so both routes provably solve the same instance. Two formulations
+are used:
+\begin{enumerate}[leftmargin=2em,label=(\Alph*)]
+\item \textbf{Explicit Kronecker matrix} (\code{direct\_hierarchy.py}):
+every row is literally the Kronecker product of its defining vectors and
+the whole matrix is handed to HiGHS. The facet matrix has
+$\mathrm{nnz}(\Phi)\,\mathrm{nnz}(\Psi)^n$ nonzeros ($5.0\times10^7$ for
+the pentagon at $n=3$, $4.2\times10^9$ at $n=4$), so this literal
+formulation reaches $n\leq 3$ for the polygon theories and $n\leq 5$ for
+the classical bit on a machine with a few GB of memory.
+\item \textbf{Complete facet family with intermediate contractions.}
+The same LP with the contraction spelled out slot by slot through
+auxiliary variables
+$Z_\varphi=(\varphi\otimes\mathrm{id}^{\otimes n})(Y)$,
+$Z_{\varphi,k_1}=(\psi_{k_1}\otimes\mathrm{id}^{\otimes(n-1)})(Z_\varphi)$,
+\ldots, and the facet rows $\psi_{k_n}(Z_{\varphi,k_1\ldots k_{n-1}})\geq 0$
+--- the nested sums one would type into a modelling language
+(\code{direct\_hierarchy\_tree.py}). Eliminating the $Z$'s returns the rows
+of (A), so the LP has the same feasible $Y$'s and the same optimum; rows now have about five nonzeros, which brings
+$n=4$ for the pentagon within reach ($5.8$ million rows, $2.6$ million
+variables, $2.7\times 10^7$ nonzeros, about $2.6$ hours and $5$ GB).
+\end{enumerate}
+A result is recorded only if HiGHS reports model status \emph{Optimal}, and
+the returned $Y$ is verified independently by tensor contraction (minimum
+over all product facets and $G_A$ rows, normalization, $F_B$ on every copy,
+invariance under all $n!$ permutations), with pass/fail flags at explicit
+tolerances ($10^{-8}$). Every optimizer is stored with its SHA-256, the
+solver options, iteration counts, residuals and the software environment
+(\code{direct\_optimizers/}, \code{direct\_check\_runs/}).
+
+\begin{table}[ht]\centering\small
+\begin{tabular}{@{}llllr@{}}
+\toprule
+$K_B$ & $n$ & $p^{(n)}$ unreduced & $|$difference$|$ & formulation, time\\
+\midrule
+classical bit & 1--5 & 1, 0.75, 0.75, 0.75, 0.75 & $\leq 4.4\times10^{-16}$ & (A), $\leq 92$ s\\
+square gbit & 1--3 & 1.5, 1, 1 & $\leq 1.7\times10^{-13}$ & (A), $\leq 42$ s\\
+pentagon & 1--3 & 1.34164079, 0.92082039, 0.90420549 & $\leq 3.0\times10^{-14}$ & (A), $\leq 1012$ s\\
+pentagon & 4 & 0.89488189 & $6.0\times10^{-14}$ & (B), 9485 s\\
+pentagon + ineq. & 1--3 & 1.17331263, 0.91813655, 0.89521389 & $\leq 9.1\times10^{-13}$ & (A), $\leq 1529$ s\\
+\bottomrule
+\end{tabular}
+\caption{Unreduced level values versus the reduced pipeline
+(\code{unreduced\_checks/direct\_results\_table.md}; ten digits there). The
+differences to \code{results.json} are at the level of the LP tolerances;
+the reductions are exact. Formulation (B)
+was additionally run at $n=2,3$ for the pentagon and at $n=2$ for the
+constrained pentagon, agreeing with (A) to $10^{-14}$.}
+\label{tab:unreduced}
+\end{table}
+
+Table~\ref{tab:unreduced} summarizes the outcome: for every entry of
+Table~1 of the paper that is reachable without any reduction (all four
+experiments at $n\leq 3$, the classical bit up to $n=5$, and via (B) the
+pentagon at $n=4$), the unreduced value agrees with the reduced one to
+within $10^{-12}$. This is the numerical confirmation that the three
+reductions change the parametrization, not the optimum --- and it
+quantifies why they are needed: at $n=4$ the literal facet matrix already
+has $4\times 10^9$ nonzeros, at $n=5$ $3.5\times 10^{11}$.
+
+% ===========================================================================
+\section{Optimizer dependence of the inner values}\label{sec:sensitivity}
+
+Observation (e) of the paper rests on the files of
+\code{unreduced\_checks/} as well. The script
+\code{direct\_inner\_rounding.py} carries out the rounding of
+Section~\ref{sec:rounding} on the optimizers of the unreduced LPs, in the
+full tensor picture (all ordered outcome tuples, all
+assignments of the copies to the roles measured / kept / marginalized,
+which agree to $10^{-14}$ by permutation invariance); every rounded
+candidate is checked feasible in the unreduced description, the best
+candidate is re-evaluated from its explicit states and effects, the same
+optimizer mapped to the reduced basis is handed to the library's
+\code{inner\_rounding} as an implementation cross-check (agreement to
+$10^{-14}$), and the best candidate is turned into a \emph{rigorous} lower
+bound by \code{direct\_inner\_certify.py}: the instance is rebuilt in
+interval arithmetic (\code{mpmath}, 60 digits) from its definition, the
+equality constraints are imposed exactly, the candidate is mixed with a
+strictly interior product strategy ($\varepsilon=10^{-9}$), every
+inequality of the original problem is verified strictly positive on the
+mixed strategy, and the lower endpoint of the interval of its value is the
+certified bound ($L^{(n)}-O(10^{-9})$; for the rational instances bit and
+gbit the candidate is rationalized and checked exactly, giving $3/4$, $1$,
+$11/18$, \ldots).
+
+\code{direct\_inner\_sensitivity.py} then rounds, for $n=1,2$, the
+optimizers of the same level LP returned by four solver routes --- the
+explicit formulation (A) with dual simplex, with interior point plus
+crossover, and with interior point without crossover, and the equivalent
+formulation (B) with interior point --- each raw and after dihedral group
+averaging. Table~\ref{tab:sens} shows the result at $n=2$: the outer value
+is the same to $10^{-10}$ throughout while the optimizers differ by $O(0.1)$
+in sup norm, and the rounded values spread over the ranges quoted in the
+paper. Vertex optimizers (simplex, crossover) tended to round to higher
+values than interior ones, but no route dominates; for the square gbit the
+simplex vertex rounds to a strategy with PR-box correlations already at
+$m=0$, so that for this optimizer the bracket closes at $n=2$ (the shipped
+run closes it at $n=4$). Group averaging makes an optimizer invariant but
+not unique: the averaged optimizers round to yet other values. At $n=1$
+all routes give the same value ($1/2$, $1/2$, $1/2$ and
+$(15-\sqrt5)/25$).
+
+\begin{table}[ht]\centering\small
+\begin{tabular}{lcccc@{\qquad}c}
+\toprule
+$K_B$ ($n=2$) & simplex & ipm\,+\,xover & ipm & tree, ipm & range\\
+\midrule
+classical bit & $0.7500$ & $0.7500$ & $0.5494$ & $0.5245$ & $[0.520,\ 0.750]$\\
+square gbit & $1.0000$ & $0.6111$ & $0.5666$ & $0.5515$ & $[0.551,\ 1.000]$\\
+pentagon & $0.5474$ & $0.5618$ & $0.5499$ & $0.5423$ & $[0.532,\ 0.562]$\\
+pentagon + ineq. & $0.6136$ & $0.6146$ & $0.6080$ & $0.6065$ & $[0.606,\ 0.615]$\\
+\bottomrule
+\end{tabular}
+\caption{Rounded values $L^{(2)}$ of the raw optimizers returned by four
+solver routes for the same unreduced level-2 LP, and the range over the
+routes including the group-averaged optimizers (the intervals quoted in
+observation (e) of the paper). The shipped run (Table~1) has
+$L^{(2)}=0.7500$, $0.5625$, $0.5459$, $0.6097$. Every value is certified
+rigorously as a lower bound on $\gamma^*$; all data, hashes and certificates
+are in \code{direct\_inner\_sensitivity.json}.}
+\label{tab:sens}
+\end{table}
+
+The consequence for reproducibility is spelled out in the paper: $p^{(n)}$
+is intrinsic to the level, whereas $L^{(n)}$ is attached to a specific
+optimizer. HiGHS is deterministic only within one build and platform; the
+same source with the same HiGHS version can return another vertex of the
+optimal face on another machine. Concretely, re-running \code{reproduce.py} in a second environment
+(Linux x86-64, HiGHS 1.15.1) reproduced all outer values to $5\times
+10^{-11}$ and all inner values of Table~1 for the bit, the gbit and at
+$n\leq 2$, but returned $L^{(3)}=0.6111$ for the pentagon instead of the
+shipped $0.6044$, and values differing in the fourth decimal at $n=4,5$
+for the pentagon and at $n=3,4$ for the constrained pentagon. This is why the optimizers behind the shipped inner
+values of \code{unreduced\_checks/} are stored with their hashes and
+rounded from file by default, and why the notebook checks the inner values
+for validity rather than for digits. The flip side, also noted in the
+paper, is a cheap practical lever: rounding costs little compared with the
+LP, so one may round several optimizers and keep the best strategy.
+
+% ===========================================================================
+\section{Level-1 diagnostics}\label{sec:level1}
+
+Observation (a) of the paper is produced by
+\code{level1\_pseudocorrelations.py}: it re-solves the level-1 LPs (the
+maximal tensor product $\Kasm\tmax\Kmm$) and contracts the optimizer with
+the Choi tensor $\chi_{A(K_B)^\star}$ as in~\eqref{eq:gamma}, which yields a
+normalized, no-signalling table $p(a,b\vert x,y)$. For the classical bit,
+whose cone is simplicial, the table is the PR box and $p^{(1)}=1$ is the
+no-signalling value of CHSH. For the square gbit the entries reach $-1/4$
+and $p^{(1)}=3/2$; for the pentagon the minimum entry is $(1-3/\sqrt5)/2$
+and $p^{(1)}=3/\sqrt5$; for the constrained pentagon $p^{(1)}=1.1733$ with
+negative entries as well. Level $1$ is thus a valid but trivial bound, and
+the non-trivial information enters with the symmetric-extension
+constraints from $n=2$ on.
+
+% ===========================================================================
+\section{Reproducing the results}\label{sec:repro}
+
+\paragraph{Dependencies.}
+Python 3.10 or newer with \code{numpy}, \code{scipy}, \code{highspy}
+(HiGHS~\cite{HiGHS}) and \code{matplotlib} (\code{requirements.txt});
+additionally \code{nbformat}, \code{nbclient} and \code{ipykernel} to
+rebuild the notebook, \code{pycddlib} $\geq 3.0$ (built against cddlib
+with GMP) for the vertex-enumeration cross-check of
+\code{exact\_game\_value.py} (\code{--no-vertices} runs without it), and
+\code{mpmath} for the interval certificates of \code{unreduced\_checks/}
+(\code{--no-certify} skips them). The shipped data were produced with
+Python 3.11, NumPy 2.4, SciPy 1.17 and HiGHS 1.15.1.
+
+\paragraph{Table 1 and Figure 1 from scratch.}
+\begin{center}
+\code{python3 reproduce.py}\qquad(\(\sim\)15--40 min, one core)
+\end{center}
+runs, per experiment, the outer levels $p^{(1)},\ldots,p^{(5)}$ and the
+rounding at every level, checks the sandwich
+$L^{(n)}\leq\gamma^*\leq p^{(n)}$ against the exact optima, writes
+\code{results.json} (pass \code{--out} to keep the shipped file) and
+renders \code{hierarchy\_convergence.pdf/.png} via \code{make\_figure.py};
+\code{--nmax 3} gives a quick run in seconds.
+
+\paragraph{Exact reference values.}
+\begin{center}
+\code{python3 exact\_game\_value.py}\qquad(seconds; \code{--full} solves every multimeter pair)
+\end{center}
+prints, per experiment, the exact $\gamma^*$ with closed form, the number
+of certified LPs and of maximizing multimeter pairs, the vertex count of
+$\Kasm$, the agreement with the library-coordinate float pipeline and with
+\code{results.json}, and writes \code{exact\_game\_values.json/.md}.
+
+\paragraph{Observation (a).}
+\code{python3 level1\_pseudocorrelations.py} prints the level-1 tables
+(Section~\ref{sec:level1}).
+
+\paragraph{Unreduced cross-check and observation (e)} (folder
+\code{unreduced\_checks/}; all paths are resolved relative to the scripts,
+so the commands work from any directory):
+\begin{center}\small
+\begin{tabular}{@{}l@{\quad}>{\raggedright\arraybackslash}p{58mm}@{}}
+\code{python3 direct\_hierarchy.py --sizes} & explicit LP sizes per level\\
+\code{python3 direct\_hierarchy.py} & (A), all levels that fit ($\sim$1 h); saves the optimizers\\
+\code{python3 direct\_hierarchy\_tree.py --exp pentagon} & \\
+\code{\ \ --n 4 --solver ipm --crossover off --ipm-tol 1e-10} & (B), pentagon $n=4$ ($\sim$2.6 h, $\sim$5 GB)\\
+\code{python3 direct\_summary.py} & merges the run files into \code{direct\_results.json}\\
+\code{python3 direct\_inner\_rounding.py --nmax 3} & rounds the saved optimizers, certifies (seconds)\\
+\code{python3 direct\_inner\_sensitivity.py} & Table~\ref{tab:sens} from the saved route optimizers\\
+\code{python3 direct\_inner\_sensitivity.py --resolve} & the four routes afresh on this machine\\
+\end{tabular}
+\end{center}
+
+\noindent The last four commands regenerate the JSON files and Markdown
+tables shipped in the folder from the stored run files and optimizers;
+re-solving (\code{--resolve}, or running \code{direct\_hierarchy.py})
+overwrites the stored optimizers and may change the rounded values, as
+explained in Section~\ref{sec:sensitivity}.
+
+\paragraph{Notebook.}
+\code{reproduce\_results.ipynb} is a pre-executed walkthrough of all of the
+above with $95$ soft assertion checks (levels $n\leq 3$ live, $n=4,5$ from
+\code{results.json}; \code{RUN\_FULL = True} recomputes them);
+\code{python3 build\_notebook.py --execute} regenerates and re-executes it
+in about a minute.
+
+\paragraph{What to test after modifying the pipeline.}
+Test \emph{validity} and \emph{trends}, not digits of the inner values:
+outer values must reproduce to $\sim 10^{-12}$ and be nonincreasing in
+$n$ and $\geq\gamma^*$; rounded values must be $\leq\gamma^*$ with
+feasibility slacks $\geq -10^{-10}$; their digits are optimizer dependent
+(Section~\ref{sec:sensitivity}).
+
+% ===========================================================================
+\section{File-by-file guide}\label{sec:files}
+
+\begin{center}\small
+\begin{tabular}{>{\raggedright\arraybackslash}p{52mm}>{\raggedright\arraybackslash}p{90mm}}
+\toprule
+file & contents\\
+\midrule
+\code{README.md} & Overview, installation, the table, how to reproduce.\\
+\code{implementation\_notes.tex/.pdf} & This document.\\
+\code{gpt\_definetti\_games.py} & Library: polygon theories and their
+cones (\code{Cone}, \code{pentagon\_selfdual}, \code{square\_gbit},
+\code{classical\_bit}), game bodies (\code{GameProblem}), the two
+complete-list level solvers (\code{hierarchy\_level\_full},
+\code{hierarchy\_level\_symfull}), symmetric-tensor machinery
+(\code{SymSpace}), \code{inner\_rounding}.\\
+\code{reproduce.py} & Headless reproduction of Table 1 and the figure;
+writes \code{results.json}.\\
+\code{results.json} & The shipped run: per experiment the exact optimum,
+per level the outer value with LP statistics (\code{n\_vars},
+\code{n\_cuts}, \code{seconds}, \code{certified\_by}) and the rounding
+(\code{best}, \code{best\_m}, per-$m$ values, \code{min\_slack}).\\
+\code{make\_figure.py} & Renders \code{hierarchy\_convergence.pdf/.png}
+from \code{results.json}.\\
+\code{exact\_game\_value.py} & Exact direct computation of $\gamma^*$
+(Section~\ref{sec:exact}); output \code{exact\_game\_values.json/.md}.\\
+\code{level1\_pseudocorrelations.py} & Level-1 tables of observation (a).\\
+\code{reproduce\_results.ipynb} & Pre-executed walkthrough ($95$ checks);
+regenerated by \code{build\_notebook.py}.\\
+\code{requirements.txt} & Python dependencies.\\
+\midrule
+\multicolumn{2}{l}{\emph{folder} \code{unreduced\_checks/}}\\
+\code{direct\_hierarchy.py} & Formulation (A): the
+literal level-$n$ LP; saves optimizers to \code{direct\_optimizers/}.\\
+\code{direct\_hierarchy\_tree.py} & Formulation (B).\\
+\code{direct\_summary.py} & Merges the run records of
+\code{direct\_check\_runs/} into \code{direct\_results.json} and
+\code{direct\_results\_table.md}.\\
+\code{direct\_inner\_rounding.py} & Rounding of the
+unreduced optimizers with all cross-checks; output
+\code{direct\_inner\_results.json}, \code{direct\_inner\_table.md}.\\
+\code{direct\_inner\_certify.py} & Rigorous interval /
+exact-rational certificates of rounded strategies.\\
+\code{direct\_inner\_sensitivity.py} & Solver-route
+study of Section~\ref{sec:sensitivity}; output
+\code{direct\_inner\_sensitivity.json/.md}.\\
+\code{direct\_optimizers/} & Stored optimizers
+(\code{*\_Y.npy}) with side-car JSON (SHA-256, solver options, residuals,
+environment).\\
+\code{direct\_check\_runs/} & Raw run records of (A) and
+(B), including the pentagon $n=4$ tensor.\\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\section*{Acknowledgements}
+We thank Tobias Rippchen for fruitful discussions. This document and the
+underlying code were prepared with the assistance of Anthropic's Claude
+Fable 5 and OpenAI's ChatGPT 5.6.
+
+% ===========================================================================
+\begin{thebibliography}{9}
+
+\bibitem{paper}
+J.~A. Zeiss, G.~Kossmann, R.~Schwonnek, M.~Pl\'avala,
+\emph{Finite de Finetti for convex bodies and polynomial optimization},
+arXiv:2601.15184.
+
+\bibitem{HiGHS}
+Q.~Huangfu, J.~A.~J. Hall,
+\emph{Parallelizing the dual revised simplex method},
+Mathematical Programming Computation \textbf{10}, 119--142 (2018).
+doi:\href{https://doi.org/10.1007/s12532-017-0130-5}{10.1007/s12532-017-0130-5}.
+
+\bibitem{Janotta2011}
+P.~Janotta, C.~Gogolin, J.~Barrett, N.~Brunner,
+\emph{Limits on nonlocal correlations from the structure of the local state space},
+New Journal of Physics \textbf{13}, 063024 (2011).
+doi:\href{https://doi.org/10.1088/1367-2630/13/6/063024}{10.1088/1367-2630/13/6/063024}.
+
+\bibitem{cddlib}
+K.~Fukuda, A.~Prodon,
+\emph{Double description method revisited},
+in: Combinatorics and Computer Science, Lecture Notes in Computer Science
+\textbf{1120}, Springer, 91--111 (1996).
+
+\end{thebibliography}
+
+\end{document}

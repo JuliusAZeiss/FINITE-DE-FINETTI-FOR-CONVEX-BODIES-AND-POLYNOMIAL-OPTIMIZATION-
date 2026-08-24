@@ -1,0 +1,9 @@
+# core (Table 1, figure, exact reference values, notebook execution)
+numpy>=1.26
+scipy>=1.11
+highspy>=1.7
+matplotlib>=3.7
+# optional
+# pycddlib>=3.0      # vertex-enumeration cross-check of exact_game_value.py (needs cddlib/GMP)
+# mpmath>=1.3        # rigorous interval certificates in unreduced_checks/
+# nbformat, nbclient, ipykernel   # rebuild/execute reproduce_results.ipynb
