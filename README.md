@@ -112,7 +112,7 @@ repository itself is cited there as
       author  = {Julius A. Zeiss},
       title   = {Numerics for "Finite de Finetti for convex bodies and polynomial optimization"},
       year    = {2026},
-      url     = {https://github.com/JuliusAZeiss/Finite-de-Finetti-for-convex-bodies-and-Polynomial-Optimization},
+      url     = {https://github.com/JuliusAZeiss/FINITE-DE-FINETTI-FOR-CONVEX-BODIES-AND-POLYNOMIAL-OPTIMIZATION-},
     }
 
 The code and this documentation were prepared with the assistance of
